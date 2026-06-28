@@ -159,31 +159,77 @@ export const MainMenuScreen: React.FC<NavigationProps> = ({ onNavigate, onGameSt
     const files = event.target.files;
     if (!files || files.length === 0) return;
     let successCount = 0;
+    
     for (let i = 0; i < files.length; i++) {
         try {
             const file = files[i];
-            const reader = new FileReader();
             const fileContent = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
               reader.onload = (e) => resolve(e.target?.result as string);
               reader.readAsText(file);
             });
-            const parsedData = JSON.parse(fileContent);
-            if (parsedData.savedState || parsedData.history || parsedData.world) {
-                const saveId = `manual-import-${Date.now()}-${i}`;
-                await dbService.saveGameState({
+            const imported = JSON.parse(fileContent);
+
+            if (!imported || typeof imported !== 'object') continue;
+
+            let parsedData: any = null;
+            let saveId = `manual-import-${Date.now()}-${i}`;
+            let saveName = `[Nhập] ${file.name.replace('.json', '')}`;
+            let createdAt = Date.now();
+
+            // Format 1: Full SaveFile object (exported via handleDownloadSave)
+            if (imported.id && imported.name && imported.data) {
+                parsedData = imported.data;
+                if (typeof parsedData === 'string') {
+                    try {
+                        const { CompressionUtils } = await import('../../../utils/compression');
+                        if (imported._compressed) {
+                            parsedData = JSON.parse(CompressionUtils.decompress(parsedData));
+                        } else {
+                            parsedData = JSON.parse(parsedData);
+                        }
+                    } catch (inner) {
+                        console.warn("Failed to parse/decompress imported save data, storing as is:", inner);
+                    }
+                }
+                saveId = imported.id;
+                // Avoid double [Nhập] / (Nhập)
+                saveName = imported.name.includes('(Nhập)') || imported.name.includes('[Nhập]') 
+                    ? imported.name 
+                    : `${imported.name} (Nhập)`;
+                createdAt = imported.createdAt || Date.now();
+            } else {
+                // Format 2: Raw data object (with savedState, history, or world)
+                parsedData = imported;
+            }
+
+            // Verify if the parsedData represents valid game state data
+            if (parsedData && (parsedData.savedState || parsedData.history || parsedData.world)) {
+                const saveData: SaveFile = {
                     id: saveId,
-                    name: `[Nhập] ${file.name.replace('.json', '')}`,
+                    name: saveName,
+                    createdAt: createdAt,
                     updatedAt: Date.now(),
                     data: parsedData
-                });
+                };
+
+                await dbService.saveGameState(saveData);
                 successCount++;
             }
-        } catch(e){}
+        } catch (e) {
+            console.error("Failed to import save file in MainMenu:", e);
+        }
     }
+
     const saves = await dbService.getAllSaves();
     saves.sort((a, b) => b.updatedAt - a.updatedAt);
     setSaveList(saves);
-    if (successCount > 0) setToast({ show: true, message: `Đã nhập thành công ${successCount} tệp lưu!` });
+    
+    if (successCount > 0) {
+        setToast({ show: true, message: `Đã nhập thành công ${successCount} tệp lưu!` });
+    } else {
+        setToast({ show: true, message: "Không tìm thấy dữ liệu game hợp lệ trong tệp!" });
+    }
     event.target.value = '';
   };
 
@@ -462,7 +508,7 @@ export const MainMenuScreen: React.FC<NavigationProps> = ({ onNavigate, onGameSt
                                       <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                                         <button 
                                           onClick={() => handleDownloadSave(save)} 
-                                          className="w-10 h-10 flex items-center justify-center rounded-xl opacity-0 group-hover:opacity-100 transition-opacity" 
+                                          className="w-10 h-10 flex items-center justify-center rounded-xl hover:scale-105 active:scale-95 transition-all" 
                                           style={{ color: '#10b981', backgroundColor: s.card, boxShadow: s.shadowInner }}
                                           title="Tải tệp lưu (.json)"
                                         >
@@ -470,7 +516,7 @@ export const MainMenuScreen: React.FC<NavigationProps> = ({ onNavigate, onGameSt
                                         </button>
                                         <button 
                                           onClick={(e) => handleDeleteClick(e, save.id)} 
-                                          className="w-10 h-10 flex items-center justify-center rounded-xl opacity-0 group-hover:opacity-100 transition-opacity" 
+                                          className="w-10 h-10 flex items-center justify-center rounded-xl hover:scale-105 active:scale-95 transition-all" 
                                           style={{ color: '#ef4444', backgroundColor: s.card, boxShadow: s.shadowInner }}
                                           title="Xóa tệp lưu"
                                         >
